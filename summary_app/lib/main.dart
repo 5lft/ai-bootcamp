@@ -29,7 +29,7 @@ class MyApp extends StatelessWidget {
         //
         // This works for code too, not just values: Most code changes can be
         // tested with just a hot reload.
-        colorScheme: .fromSeed(seedColor: Colors.deepPurple),
+        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
       ),
       home: const MyHomePage(title: 'Summary App'),
     );
@@ -55,115 +55,45 @@ class MyHomePage extends StatefulWidget {
 }
 
 class _MyHomePageState extends State<MyHomePage> {
-  TextEditingController _textController = TextEditingController();
+  final TextEditingController _textController = TextEditingController();
+  bool _isLoading = false;
+  String? _lastSuccessfulText;
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
-    // This method is rerun every time setState is called, for instance as done
-    // by the _incrementCounter method above.
-    //
-    // The Flutter framework has been optimized to make rerunning build methods
-    // fast, so that you can just rebuild anything that needs updating rather
-    // than having to individually change instances of widgets.
+    final text = _textController.text.trim();
+    final canSubmit = !_isLoading && text.isNotEmpty && text != _lastSuccessfulText;
     return Scaffold(
-      appBar: AppBar(
-        // TRY THIS: Try changing the color here to a specific color (to
-        // Colors.amber, perhaps?) and trigger a hot reload to see the AppBar
-        // change color while the other colors stay the same.
-        backgroundColor: Theme.of(context).colorScheme.inversePrimary,
-        // Here we take the value from the MyHomePage object that was created by
-        // the App.build method, and use it to set our appbar title.
-        title: Text(widget.title),
-      ),
+      appBar: AppBar(backgroundColor: Theme.of(context).colorScheme.inversePrimary, title: Text(widget.title)),
       body: Center(
-        // Center is a layout widget. It takes a single child and positions it
-        // in the middle of the parent.
         child: Padding(
           padding: const EdgeInsets.all(8.0),
           child: Column(
-            // Column is also a layout widget. It takes a list of children and
-            // arranges them vertically. By default, it sizes itself to fit its
-            // children horizontally, and tries to be as tall as its parent.
-            //
-            // Column has various properties to control how it sizes itself and
-            // how it positions its children. Here we use mainAxisAlignment to
-            // center the children vertically; the main axis here is the vertical
-            // axis because Columns are vertical (the cross axis would be
-            // horizontal).
-            //
-            // TRY THIS: Invoke "debug painting" (choose the "Toggle Debug Paint"
-            // action in the IDE, or press "p" in the console), to see the
-            // wireframe for each widget.
-            mainAxisAlignment: .center,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               ConstrainedBox(
-                constraints: const BoxConstraints(
-                  minHeight: 200,
-                  maxHeight: 400,
-                ),
+                constraints: const BoxConstraints(minHeight: 200, maxHeight: 400),
                 child: TextField(
                   controller: _textController,
-                  decoration: InputDecoration(
-                    border: OutlineInputBorder(),
-                    labelText: 'Enter text',
-                  ),
+                  decoration: InputDecoration(border: OutlineInputBorder(), labelText: 'Enter text'),
                   maxLines: null,
                   minLines: 10,
+                  enabled: !_isLoading,
+                  onChanged: (value) {
+                    setState(() {});
+                  },
                 ),
               ),
               const SizedBox(height: 20),
               ElevatedButton(
-                onPressed: () {
-                  // Handle button press
-                  final dio = Dio();
-                  dio
-                      .post(
-                        'http://127.0.0.1:8000/summaries',
-                        data: {'text': _textController.text},
-                      )
-                      .then((response) {
-                        // Handle the response from the API
-                        print(response.data);
-                        showDialog(
-                          context: context,
-                          builder: (context) {
-                            return AlertDialog(
-                              title: const Text('Summary'),
-                              content: Text(response.data['summary']),
-                              actions: [
-                                TextButton(
-                                  onPressed: () {
-                                    Navigator.of(context).pop();
-                                  },
-                                  child: const Text('OK'),
-                                ),
-                              ],
-                            );
-                          },
-                        );
-                      })
-                      .catchError((error) {
-                        // Handle any errors
-                        print(error);
-                        showDialog(
-                          context: context,
-                          builder: (context) {
-                            return AlertDialog(
-                              title: const Text('Error'),
-                              content: Text(error.data['detail']),
-                              actions: [
-                                TextButton(
-                                  onPressed: () {
-                                    Navigator.of(context).pop();
-                                  },
-                                  child: const Text('OK'),
-                                ),
-                              ],
-                            );
-                          },
-                        );
-                      });
-                },
+                onPressed: canSubmit ? () => requestSummary(_textController.text.trim()) : null,
+                style: ElevatedButton.styleFrom(backgroundColor: canSubmit ? Colors.blue : Colors.grey, foregroundColor: Colors.white),
                 child: const Text('Summary'),
               ),
             ],
@@ -171,5 +101,71 @@ class _MyHomePageState extends State<MyHomePage> {
         ),
       ),
     );
+  }
+
+  Future<void> requestSummary(String text) async {
+    if (_isLoading || text.isEmpty || text == _lastSuccessfulText) {
+      return;
+    }
+
+    setState(() => _isLoading = true);
+    final dio = Dio();
+    try {
+      final response = await dio.post('http://127.0.0.1:8000/summaries', data: {'text': text});
+
+      if (!mounted) return;
+      setState(() {
+        _lastSuccessfulText = text;
+      });
+
+      await showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Summary'),
+            content: Text(response.data['summary']),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+    } on DioException catch (e) {
+      if (!context.mounted) return;
+
+      final data = e.response?.data;
+      final detail = data is Map ? data['detail'] : null;
+      final message = detail is String ? detail : '요청 처리 중 오류가 발생했습니다.';
+
+      await showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: const Text('Error'),
+            content: Text(message),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.of(context).pop();
+                },
+                child: const Text('OK'),
+              ),
+            ],
+          );
+        },
+      );
+    } finally {
+      // mounted 확인 후 로딩 해제
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+        });
+      }
+    }
   }
 }
